@@ -66,7 +66,7 @@ namespace SickToolbox {
     unsigned int _sick_fd;   
     
     /** Reads n bytes into the destination buffer */
-    void _readBytes( uint8_t * const dest_buffer, const int num_bytes_to_read, const unsigned int timeout_value = 0 ) const noexcept(false); /*const throw ( SickTimeoutException, SickIOException )*/;       
+    void _readBytes( uint8_t * const dest_buffer, const int num_bytes_to_read, const unsigned int timeout_value = 0 ) const noexcept(false); /*const throw ( SickTimeoutException, SickIOException )*/       
     
   private:
 

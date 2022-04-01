@@ -14,15 +14,15 @@
  */
 
 /* Auto-generated header */
-#include "sicktoolbox/SickConfig.hh"
+#include "SickConfig.hh"
 
 /* Implementation dependencies */
 #include <iomanip>
 #include <iostream>
 #include <arpa/inet.h> 
 
-#include "sicktoolbox/SickNAV350Message.hh"
-#include "sicktoolbox/SickNAV350Utility.hh" // for byye-order conversions where necessary
+#include "SickNAV350Message.hh"
+#include "SickNAV350Utility.hh" // for byye-order conversions where necessary
 
 /* Associate the namespace */
 namespace SickToolbox {

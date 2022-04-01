@@ -39,10 +39,10 @@
 #include <arpa/inet.h>
 #include <stdlib.h>
 //#include <stdio.h>
-#include "sicktoolbox/SickLIDAR.hh"
-#include "sicktoolbox/SickNAV350BufferMonitor.hh"
-#include "sicktoolbox/SickNAV350Message.hh"
-#include "sicktoolbox/SickException.hh"
+#include "SickLIDAR.hh"
+#include "SickNAV350BufferMonitor.hh"
+#include "SickNAV350Message.hh"
+#include "SickException.hh"
 #define SICK_MAX_NUM_REFLECTORS 50
 /**
  * \namespace SickToolbox

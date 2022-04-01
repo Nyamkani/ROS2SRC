@@ -20,7 +20,7 @@
 #pragma GCC diagnostic ignored "-Wunused-value" 
 
 /* Auto-generated header */
-#include "sicktoolbox/SickConfig.hh"
+#include "SickConfig.hh"
 
 /* Implementation dependencies */
 #include <string>
@@ -41,11 +41,11 @@
 #include <vector>             // for returning the results of parsed strings
 #include <errno.h>            // for timing connect()
 
-#include "sicktoolbox/SickNAV350.hh"
-#include "sicktoolbox/SickNAV350Message.hh"
-#include "sicktoolbox/SickNAV350BufferMonitor.hh"
-#include "sicktoolbox/SickNAV350Utility.hh"   
- #include "sicktoolbox/SickException.hh"
+#include "SickNAV350.hh"
+#include "SickNAV350Message.hh"
+#include "SickNAV350BufferMonitor.hh"
+#include "SickNAV350Utility.hh"   
+#include "SickException.hh"
 using namespace std;
 /* Associate the namespace */
 namespace SickToolbox {

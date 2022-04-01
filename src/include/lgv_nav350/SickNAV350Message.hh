@@ -19,7 +19,7 @@
 /* Definition dependencies */
 #include <string.h>
 #include <arpa/inet.h>
-#include "sicktoolbox/SickMessage.hh"
+#include "SickMessage.hh"
 
 #define SICK_NAV350_MSG_HEADER_LEN             (1)  ///< Sick Nav350 message header length in bytes
 #define SICK_NAV350_MSG_PAYLOAD_MAX_LEN        (40000)//(18200)  //(5816)  ///< Sick Nav350 maximum payload length

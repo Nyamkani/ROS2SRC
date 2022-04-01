@@ -17,16 +17,16 @@
 #pragma GCC diagnostic ignored  "-Wunused-variable"
 
 /* Auto-generated header */
-#include "sicktoolbox/SickConfig.hh"
+#include "SickConfig.hh"
 
 /* Implementation dependencies */
 #include <iostream>
 #include <sys/ioctl.h>
 
-#include "sicktoolbox/SickNAV350BufferMonitor.hh"
-#include "sicktoolbox/SickNAV350Message.hh"
-#include "sicktoolbox/SickException.hh"
-#include "sicktoolbox/SickNAV350Utility.hh"
+#include "SickNAV350BufferMonitor.hh"
+#include "SickNAV350Message.hh"
+#include "SickException.hh"
+#include "SickNAV350Utility.hh"
 
 /* Associate the namespace */
 namespace SickToolbox {
