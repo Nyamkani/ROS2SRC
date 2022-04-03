@@ -153,6 +153,43 @@ auto createQuaternionFromYaw(double yaw)
   return q;
 }
 
+void PublishReflectorTransform(std::vector<double> x,std::vector<double> y,double th,std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster,std::string frame_id,std::string child_frame_id)
+{
+  //printf("\npos %.2f %.2f %.2f\n",x,y,th);
+  tf2::Transform b_transforms;
+  //tf2::Stamped<tf2::Transform> b_transforms;
+  //tf2::Quaternion tfquat=createQuaternionFromYaw(th);//th should be 0? no orientation information on reflectors?
+  tf2::Quaternion tfquat = createQuaternionFromYaw(th);//th should be 0? no orientation information on reflectors?
+
+  std::ostringstream childframes;
+  for (int i=0;i<x.size();i++)
+  {
+    childframes << child_frame_id << i;
+    b_transforms.setRotation(tfquat);
+    b_transforms.setOrigin(tf2::Vector3(-x[i] / 1000, -y[i] / 1000, 0.0));
+    //RCLCPP_DEBUG_STREAM(PublishReflectorTransform.get_logger(), "Reflector "<<i<<" x pos: "<<-x[i]<<" y pos: "<<-y[i]<<" with frame: "<<childframes.str());
+ 
+    //send the transform (changed by alternatives)
+    //odom_broadcaster[i].sendTransform(tf::StampedTransform(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
+    //odom_broadcaster[i].sendTransform(geometry_msgs::msg::TransformStamped(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
+    
+    //Caused by no exist tf::StampedTransform() func.
+    geometry_msgs::msg::TransformStamped t;
+    auto now = rclcpp::Clock().now();
+    //add infomations
+    t.header.stamp = now;
+    t.header.frame_id = frame_id;
+    t.child_frame_id = childframes.str();
+    t.transform = tf2::toMsg(b_transforms);
+
+    odom_broadcaster[i].sendTransform(t);
+    //odom_broadcaster[i].sendTransform(geometry_msgs::msg::TransformStamped(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
+    childframes.str(std::string());
+    childframes.clear();
+  }
+}
+
+
 
 
 
@@ -207,13 +244,18 @@ class sick_nav350: public rclcpp::Node
         //geometry_msgs::msg::TransformStamped sickn350_to_target_tf;
         //geometry_msgs::msg::TransformStamped target_to_mobile_base_tf;
 
-        tf2::Transform sickn350_to_target_tf;
-        tf2::Transform target_to_mobile_base_tf;
+        //tf2::Transform sickn350_to_target_tf;
+        //tf2::Transform target_to_mobile_base_tf;
+        tf2::Stamped<tf2::Transform> sickn350_to_target_tf;
+        tf2::Stamped<tf2::Transform> target_to_mobile_base_tf;
 
         rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub;
-        //rclcpp::Publisher<nav_msgs/msg/Odometry>::SharedPtr odom_pub;
+        rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub;
+
+        std::unique_ptr<tf2_ros::Buffer> tf_buffer;
 
 
+ tf2::Stamped<tf2::Transform> tf2;
 
     private:
         void init_param()
@@ -338,9 +380,8 @@ class sick_nav350: public rclcpp::Node
     public:    
         int work_loop()
         {
-            RCLCPP_INFO(this->get_logger(), "init start");
+            RCLCPP_INFO(this->get_logger(), "init start"); ////////////////////////////////////////////////////////////////////////
             init_param();
-            RCLCPP_INFO(this->get_logger(), "init done");
             /* Define buffers for return values */
             double range_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
             int intensity_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
@@ -355,10 +396,10 @@ class sick_nav350: public rclcpp::Node
             std::vector<tf2_ros::TransformBroadcaster> landmark_broadcasters;
             //tf2_ros::TransformBroadcaster odom_broadcaster;
             //tf2_ros::TransformListener tf_listerner;
-            //std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
-            //std::vector<tf2_ros::TransformListener> tf_listerner;
-            geometry_msgs::msg::TransformStamped odom_broadcaster;
-            geometry_msgs::msg::TransformStamped tf_listerner;
+            std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
+            std::vector<tf2_ros::TransformListener> tf_listerner;
+            //geometry_msgs::msg::TransformStamped odom_broadcaster;
+            //geometry_msgs::msg::TransformStamped tf_listerner;
 
                         /* Instantiate the object */
             SickToolbox::SickNav350 sick_nav350(ipaddress.c_str(),port);
@@ -375,7 +416,7 @@ class sick_nav350: public rclcpp::Node
                     sick_nav350.SetOperatingMode((int)OperatingModes::MAPPING);
                     sick_nav350.DoMapping();
                     sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
-                    //ROS_INFO_STREAM("Sicknav50 Mapping Completed");
+                    RCLCPP_INFO_STREAM(this->get_logger(), "Sicknav50 Mapping Completed");
                 }
                 try
                 {
@@ -385,7 +426,7 @@ class sick_nav350: public rclcpp::Node
                 }
                 catch (...)
                 {
-                    //ROS_ERROR("Configuration error");
+                    RCLCPP_ERROR(this->get_logger(), "Configuration error");
                     return -1;
                 }
 
@@ -398,7 +439,7 @@ class sick_nav350: public rclcpp::Node
                 unsigned int last_sector_stop_timestamp = 0;
                 double full_duration;
                 rclcpp::Rate loop_rate(8);
-                std::vector<tf2_ros::TransformBroadcaster> odom_broadcasters;
+                std::unique_ptr<tf2_ros::TransformBroadcaster> odom_broadcasters;
 
 
                
@@ -410,18 +451,31 @@ class sick_nav350: public rclcpp::Node
                 else
                 {
                        RCLCPP_INFO(this->get_logger(), "init done");
+                  std::string error_msg;
+                  rclcpp::Time current_time = rclcpp::Time(0);
+                  // tf2_ros::Buffer tf_buffer;
+                  //std::vector<tf2_ros::Buffer> tf_buffer;
+                  geometry_msgs::msg::TransformStamped test_buffer1;
+                  tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+
                 try
                 {
-                  std::string error_msg;
-                //   // rclcpp::Time current_time = rclcpp::Time(0);
-                //   if(tf_listerner = buffer1.waitForTransform(target_frame_id,sick_frame_id,rclcpp::Time(0),rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLINNG_DURATION),&error_msg))
-                // {
-                   //RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup timed out, error msg: "<<error_msg);
+ 
+                // the tf2 command is chnaged
+                //   tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+
+                //   tf_listerner = tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
+                  
+                //   //tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
+
+                //  if(!tf_listerner)
+                //   RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup timed out, error msg: "<<error_msg);
                 //   return -1;
                 // }
-                //
-                //  tf_listerner.lookupTransform(sick_frame_id,target_frame_id,current_time,sickn350_to_target_tf);
+                    test_buffer1 = tf_buffer->lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
                 }
+
+
                 catch(tf2::LookupException &exp)
                 {
                   RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting");
@@ -433,6 +487,7 @@ class sick_nav350: public rclcpp::Node
                     RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting");
                     return -1;
                 }
+                  tf2::convert(test_buffer1, sickn350_to_target_tf);
                 }
 
                 rclcpp::Time previous_time = rclcpp::Clock().now()-rclcpp::Duration(0.5f);
@@ -453,10 +508,13 @@ class sick_nav350: public rclcpp::Node
                 odom_msg.header.frame_id = frame_id;
                 odom_msg.child_frame_id = mobile_base_frame_id;
 
+                std::string error_msg;
+                rclcpp::Time current_time = rclcpp::Time(0);
+                tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+                geometry_msgs::msg::TransformStamped test_buffer1;
                 try
                 {
-                    std::string error_msg;
-                    rclcpp::Time current_time = rclcpp::Time(0);
+
                 //     if(!tf_listerner.waitForTransform(
                 //         target_frame_id,mobile_base_frame_id,rclcpp::Time(0),rclcpp::Duration(TRANSFORM_TIMEOUT),
                 //         rclcpp::Duration(POLLING_DURATION),&error_msg))
@@ -466,13 +524,14 @@ class sick_nav350: public rclcpp::Node
                 //     }
 
                 //     tf_listerner.lookupTransform(target_frame_id,mobile_base_frame_id,current_time,target_to_mobile_base_tf);
+                  test_buffer1 = tf_buffer->lookupTransform(target_frame_id,mobile_base_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
                  }
                 catch(tf2::LookupException &exp)
                 {
                     RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<mobile_base_frame_id<<" and "<<target_frame_id<<" failed, exiting");
                     return -1;
                 }
-
+                  tf2::convert(test_buffer1, target_to_mobile_base_tf);
                 }
 
                 while (rclcpp::ok())
@@ -525,6 +584,7 @@ class sick_nav350: public rclcpp::Node
 
                 geometry_msgs::msg::TransformStamped s;
                 auto now = rclcpp::Clock().now();
+
                 //add infomations
                 s.header.stamp = now;
                 s.header.frame_id = frame_id;
@@ -533,18 +593,19 @@ class sick_nav350: public rclcpp::Node
 
                 RCLCPP_INFO(this->get_logger(),"here 1 ");
                 RCLCPP_DEBUG_STREAM(this->get_logger(), "Sending transform from "<<frame_id<<" to "<<target_frame_id);
-                // odom_broadcasters.sendTransform(s);            
+                odom_broadcasters->sendTransform(s);            
+                ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
                 // //odom_broadcasters.sendTransform(tf2_ros::StampedTransform(odom_to_target_tf, rclcpp::Clock().now(), frame_id, target_frame_id));
       
-                // // publishing odometry
-                // if(publish_odom)
-                // {
-                //     mobile_base_current_tf = odom_to_target_tf * target_to_mobile_base_tf;
-                //     createOdometryMessage(rclcpp::Clock().now() - previous_time, mobile_base_prev_tf, mobile_base_current_tf,odom_msg);
-                //     mobile_base_prev_tf = mobile_base_current_tf;
-                //     previous_time = rclcpp::Clock().now();
-                //     odom_pub->publish(*odom_msg);
-                // }
+                // publishing odometry
+                if(publish_odom)
+                {
+                    mobile_base_current_tf = odom_to_target_tf * target_to_mobile_base_tf;
+                    createOdometryMessage(rclcpp::Clock().now() - previous_time, mobile_base_prev_tf, mobile_base_current_tf, odom_msg);
+                    mobile_base_prev_tf = mobile_base_current_tf;
+                    previous_time = rclcpp::Clock().now();
+                    odom_pub->publish(odom_msg);
+                }
 
                 /*
                 * Get landmark data and broadcast transforms
@@ -561,9 +622,10 @@ class sick_nav350: public rclcpp::Node
                     RCLCPP_DEBUG_STREAM(this->get_logger(), "Reflector "<<r<<" x pos: "<<Rx[r]<<" y pos: "<<Ry[r]);
                 }
                 RCLCPP_INFO(this->get_logger(),"here 2 ");
-                //landmark_broadcasters.resize(number_reflectors);
-                //////////////////////////////////////////
-                //PublishReflectorTransform(Rx, Ry, DEG2RAD(phi1/1000.0), landmark_broadcasters, reflector_frame_id, reflector_child_frame_id);
+                //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                landmark_broadcasters.resize(number_reflectors);
+                ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                PublishReflectorTransform(Rx, Ry, DEG2RAD(phi1/1000.0), landmark_broadcasters, reflector_frame_id, reflector_child_frame_id);
 
                 /*
                 * Get Scan data and publish scan
@@ -595,7 +657,7 @@ class sick_nav350: public rclcpp::Node
                 RCLCPP_INFO(this->get_logger(),"here 3 ");
                 publish_scan(scan_pub, range_values, num_measurements, intensity_values, num_measurements, start_scan_time, scan_duration, inverted,
                             DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp);
-              RCLCPP_INFO(this->get_logger(),"here 4 ");
+                RCLCPP_INFO(this->get_logger(),"here 4 ");
                             //DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp,&scan_pub1);
 
 
@@ -636,41 +698,7 @@ class sick_nav350: public rclcpp::Node
 
 
 
-void PublishReflectorTransform(std::vector<double> x,std::vector<double> y,double th,std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster,std::string frame_id,std::string child_frame_id)
-{
-  //printf("\npos %.2f %.2f %.2f\n",x,y,th);
-  tf2::Transform b_transforms;
-  //tf2::Stamped<tf2::Transform> b_transforms;
-  //tf2::Quaternion tfquat=createQuaternionFromYaw(th);//th should be 0? no orientation information on reflectors?
-  tf2::Quaternion tfquat = createQuaternionFromYaw(th);//th should be 0? no orientation information on reflectors?
 
-  std::ostringstream childframes;
-  for (int i=0;i<x.size();i++)
-  {
-    childframes << child_frame_id << i;
-    b_transforms.setRotation(tfquat);
-    b_transforms.setOrigin(tf2::Vector3(-x[i] / 1000, -y[i] / 1000, 0.0));
-    //RCLCPP_DEBUG_STREAM(PublishReflectorTransform.get_logger(), "Reflector "<<i<<" x pos: "<<-x[i]<<" y pos: "<<-y[i]<<" with frame: "<<childframes.str());
- 
-    //send the transform (changed by alternatives)
-    //odom_broadcaster[i].sendTransform(tf::StampedTransform(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
-    //odom_broadcaster[i].sendTransform(geometry_msgs::msg::TransformStamped(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
-    
-    //Caused by no exist tf::StampedTransform() func.
-    geometry_msgs::msg::TransformStamped t;
-    auto now = rclcpp::Clock().now();
-    //add infomations
-    t.header.stamp = now;
-    t.header.frame_id = frame_id;
-    t.child_frame_id = childframes.str();
-    t.transform = tf2::toMsg(b_transforms);
-
-    odom_broadcaster[i].sendTransform(t);
-    //odom_broadcaster[i].sendTransform(geometry_msgs::msg::TransformStamped(b_transforms, rclcpp::Clock().now(), frame_id, childframes.str()));
-    childframes.str(std::string());
-    childframes.clear();
-  }
-}
 
 //
 //brought from rplidar source
@@ -686,7 +714,7 @@ void ExitHandler(int sig)
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
-  auto sick_nav350_publisher=  std::make_shared<sick_nav350>();
+  auto sick_nav350_publisher = std::make_shared<sick_nav350>();
   signal(SIGINT,ExitHandler);
   int ret = sick_nav350_publisher->work_loop();
 
@@ -694,14 +722,4 @@ int main(int argc, char *argv[])
   return ret;
   //return 0;
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  //rclcpp::NodeHandle nh;
-  //rclcpp::NodeHandle nh_ns("~");
-
-  //rclcpp::Publisher scan_pub = nh.advertise<sensor_msgs::msg::LaserScan>(scan, 1);
-              /////////////////////////////////////////////////////msgs from customized
-  //rclcpp::Publisher scan_pub1 = nh.advertise<sicktoolbox_wrapper::navtimestamp>("navtimestamp", 1);
-              /////////////////////////////////////////////////////msgs from customized
-  //rclcpp::Publisher odom_pub;
 
