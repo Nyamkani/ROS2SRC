@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<launch>
+  <node name="static_tf0" pkg="tf2_ros" exec="static_transform_publisher" args="0 0 0 0 0 0 /map /odom" />
+
+
+  <!--node name="sicknav350" pkg="lgv_nav350" type="sicknav350" output="screen"-->
+  <node pkg="lgv_nav350" exec="nav350"  output="screen">
+    <param name="ipaddress" type="str" value="192.168.1.10"/>
+    <param name="port" type="int" value="2112"/>
+    <param name="mode" type="int" value="4"/>
+    <param name="perform_mapping" type="bool" value="false"/>
+    <param name="wait_command" type="int" value="1"/>
+    <param name="mask_command" type="int" value="2"/>
+    <param name="frame_id" type="str" value="map"/>
+    <param name="sick_frame_id" type="str" value="nav350"/>  
+    <param name="reflector_frame_id" type="str" value="nav350"/>
+    <param name="reflector_child_frame_id" type="str" value="reflector"/>
+    <param name="inverted" type="bool" value="false"/>
+    <param name="resolution" type="float" value="1.0"/>  
+    <param name="start_angle" type="float" value="0.0"/>  
+    <param name="stop_angle" type="float" value="360.0"/>  
+  </node>
+
+    <!--node name="rviz" pkg="rviz" type="rviz" args="-d $(find sicktoolbox_wrapper)/nav350_localization.rviz"/-->
+</launch>
+

@@ -1,0 +1,2 @@
+uint32 navtimestamp
+builtin_interfaces/Time stamp
