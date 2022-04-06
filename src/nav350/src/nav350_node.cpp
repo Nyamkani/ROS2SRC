@@ -198,10 +198,6 @@ void PublishReflectorTransform(std::vector<double> x,std::vector<double> y,doubl
   }
 }
 
-
-
-
-
 namespace OperatingModes
 {
   enum OperatingMode
@@ -226,6 +222,14 @@ class sick_nav350: public rclcpp::Node
             //rclcpp::QoS(rclcpp::SensorDataQoS())
             scan_pub = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", 10);
             scan_pub1 = this->create_publisher<nav350_msg::msg::Navtimestamp>("navtimestamp", 10);
+            //odom_pub = this->create_publisher<nav_msgs::msg::Odometry>(ODOM_TOPIC, 10);
+
+            tf_buffer =
+                  std::make_unique<tf2_ros::Buffer>(this->get_clock());
+            tf_listener =
+                  std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
+                  std::vector<tf2_ros::TransformBroadcaster> landmark_broadcasters;
+
         }
 
     private:
@@ -265,6 +269,8 @@ class sick_nav350: public rclcpp::Node
         rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub;
 
         std::unique_ptr<tf2_ros::Buffer> tf_buffer;
+        std::shared_ptr<tf2_ros::TransformBroadcaster> landmark_broadcasters;
+        std::shared_ptr<tf2_ros::TransformListener> tf_listener{nullptr};
 
 
  tf2::Stamped<tf2::Transform> tf2;
@@ -317,7 +323,7 @@ class sick_nav350: public rclcpp::Node
             this->get_parameter_or<std::string>("reflector_frame_id", reflector_frame_id, "nav350");
             this->get_parameter_or<std::string>("reflector_child_frame_id", reflector_child_frame_id, "reflector");
             this->get_parameter_or<std::string>("target_frame_id",target_frame_id,sick_frame_id);
-            this->get_parameter_or<std::string>("mobile_base_frame_id",mobile_base_frame_id, "base_scan");
+            this->get_parameter_or<std::string>("mobile_base_frame_id",mobile_base_frame_id, mobile_base_frame_id);
             this->get_parameter_or<int>("wait_command", wait, 1);
             this->get_parameter_or<int>("mask_command", mask, 2);
 
@@ -383,7 +389,7 @@ class sick_nav350: public rclcpp::Node
              pub1->publish(*st);
             /////////////////////////////////////////////////////msgs from customized
         }
-        
+
     public:    
         int work_loop()
         {
@@ -399,11 +405,14 @@ class sick_nav350: public rclcpp::Node
           double sector_start_angle = {0};
           double sector_stop_angle = {0};
 
-          std::vector<tf2_ros::TransformBroadcaster> landmark_broadcasters;
-          //tf2_ros::TransformBroadcaster odom_broadcaster;
-          //tf2_ros::TransformListener tf_listerner;
-          std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
-          std::vector<tf2_ros::TransformListener> tf_listerner;
+
+
+          //tf2_ros::Buffer tf_buffer(rclcpp::Clock);
+          //tf2_ros::TransformBroadcaster odom_broadcaster();
+          //tf2_ros::TransformListener tf_listerner();
+          //std::vector<tf2_ros::Buffer> tf_buffer;
+          //std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
+          //std::vector<tf2_ros::TransformListener> tf_listerner;
           //geometry_msgs::msg::TransformStamped odom_broadcaster;
           //geometry_msgs::msg::TransformStamped tf_listerner;
 
@@ -415,14 +424,14 @@ class sick_nav350: public rclcpp::Node
             /* Initialize the device */
             sick_nav350.Initialize();
             sick_nav350.GetSickIdentity();
-            // TODO: do some calls to setup the device - e.g. scan rate. Configure mapping. Configure reflectors/landmarks
 
+            // TODO: do some calls to setup the device - e.g. scan rate. Configure mapping. Configure reflectors/landmarks
             if (do_mapping)
             {
               sick_nav350.SetOperatingMode((int)OperatingModes::MAPPING);
               sick_nav350.DoMapping();
               sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
-              RCLCPP_INFO_STREAM(this->get_logger(), "Sicknav50 Mapping Completed");
+              RCLCPP_INFO(this->get_logger(), "Sicknav50 Mapping Completed");
             }
 
             try
@@ -460,11 +469,7 @@ class sick_nav350: public rclcpp::Node
             {
               std::string error_msg;
               rclcpp::Time current_time = rclcpp::Time(0);
-              // tf2_ros::Buffer tf_buffer;
-              //std::vector<tf2_ros::Buffer> tf_buffer;
-              geometry_msgs::msg::TransformStamped test_buffer1;
-              tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-
+              
               try
               {
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
@@ -482,15 +487,17 @@ class sick_nav350: public rclcpp::Node
               // }
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                test_buffer1 = tf_buffer->lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
+                //test_buffer1 = tf_buffer.lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
+                // geometry_msgs::msg::TransformStamped test_buffer1 =
+                //     tf_buffer->lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
               }
 
               catch(tf2::LookupException &exp)
               {
-                  RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting");
+                  RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting"); //nav350, nav350
                   return -1;
               }
-              tf2::convert(test_buffer1, sickn350_to_target_tf);
+              //tf2::convert(test_buffer1, sickn350_to_target_tf);
             }
 
             rclcpp::Time previous_time = rclcpp::Clock().now()-rclcpp::Duration(0.5f);
@@ -509,13 +516,11 @@ class sick_nav350: public rclcpp::Node
               }
               odom_msg.header.frame_id = frame_id;
               odom_msg.child_frame_id = mobile_base_frame_id;
-
               std::string error_msg;
               rclcpp::Time current_time = rclcpp::Time(0);
-              tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-              geometry_msgs::msg::TransformStamped test_buffer1;
               try
               {
+                
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
               // the tf2 command is chnaged
@@ -530,8 +535,10 @@ class sick_nav350: public rclcpp::Node
               //     tf_listerner.lookupTransform(target_frame_id,mobile_base_frame_id,current_time,target_to_mobile_base_tf);
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
               ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                test_buffer1 = tf_buffer->lookupTransform(target_frame_id, mobile_base_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
-                //test_buffer1 = tf_buffer->lookupTransform(target_frame_id,0, mobile_base_frame_id,0,sickn350_to_target_tf,rclcpp::Duration(TRANSFORM_TIMEOUT));
+
+                geometry_msgs::msg::TransformStamped test_buffer1 =
+                     tf_buffer->lookupTransform(target_frame_id,mobile_base_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));//base_scan, nav350
+                     //tf_listener->sendTransform(test_buffer1);
               }
 
               catch(tf2::LookupException &exp)
@@ -539,7 +546,7 @@ class sick_nav350: public rclcpp::Node
                 RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<mobile_base_frame_id<<" and "<<target_frame_id<<" failed, exiting");
                 return -1;
               }
-              tf2::convert(test_buffer1, target_to_mobile_base_tf);
+              //tf2::convert(test_buffer1, target_to_mobile_base_tf);
             }
             while (rclcpp::ok() && !need_exit)
             {
@@ -633,7 +640,7 @@ class sick_nav350: public rclcpp::Node
                   RCLCPP_DEBUG_STREAM(this->get_logger(), "Reflector "<<r<<" x pos: "<<Rx[r]<<" y pos: "<<Ry[r]);
               }
               //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-              //landmark_broadcasters->resize(number_reflectors);
+              //landmark_broadcasters.resize(number_reflectors);
               ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
               //PublishReflectorTransform(Rx, Ry, DEG2RAD(phi1/1000.0), landmark_broadcasters, reflector_frame_id, reflector_child_frame_id);
 

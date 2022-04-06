@@ -5,15 +5,16 @@
 
   <!--node name="sicknav350" pkg="lgv_nav350" type="sicknav350" output="screen"-->
   <node pkg="lgv_nav350" exec="nav350"  output="screen">
-    <param name="ipaddress" type="str" value="192.168.1.10"/>
+    <param name="ipaddress" type="str" value="192.168.1.10"/>  <!--Sick sensor ip address -->
     <param name="port" type="int" value="2112"/>
-    <param name="mode" type="int" value="4"/>
-    <param name="perform_mapping" type="bool" value="false"/>
-    <param name="publish_odom" type="bool" value="false"/>
+    <param name="mode" type="int" value="4"/>  <!--Operating Mode: 0=powerdown, 1=standby, 2=mapping, 3-=ladnmark, 4=navigation -->
+    <param name="perform_mapping" type="bool" value="false"/> <!-- Perform mapping before going into mode -->
+    <param name="publish_odom" type="bool" value="true"/>
     <param name="wait_command" type="int" value="1"/>
-    <param name="mask_command" type="int" value="2"/>
+    <param name="mask_command" type="int" value="2"/>  <!--Mask: Landmarkmode 0=reflectors, 1=reflectors+scan; Nav mode 0=pose+reflectors, 1=pose+scan, 2=pose+reflectors+scan -->
     <param name="frame_id" type="str" value="map"/>
     <param name="sick_frame_id" type="str" value="nav350"/>  
+    <param name="mobile_base_frame_id" type="str" value="base_link"/>  
     <param name="reflector_frame_id" type="str" value="nav350"/>
     <param name="reflector_child_frame_id" type="str" value="reflector"/>
     <param name="inverted" type="bool" value="false"/>
