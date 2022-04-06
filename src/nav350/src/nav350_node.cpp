@@ -45,6 +45,12 @@ const double TRANSFORM_TIMEOUT = 20.0f;
 const double POLLING_DURATION = 0.05f;
 const std::string ODOM_TOPIC = "odom";
 
+
+//brought from nav350 source
+//for exit by executing ctr+c
+bool need_exit = false;
+
+
 // A complimentary filter to get a (much) better time estimate, does not
 // calibrate out constant network latency delays, but does get rid of 
 // timming jitter to get better timing estimates than the 
@@ -311,7 +317,7 @@ class sick_nav350: public rclcpp::Node
             this->get_parameter_or<std::string>("reflector_frame_id", reflector_frame_id, "nav350");
             this->get_parameter_or<std::string>("reflector_child_frame_id", reflector_child_frame_id, "reflector");
             this->get_parameter_or<std::string>("target_frame_id",target_frame_id,sick_frame_id);
-            this->get_parameter_or<std::string>("mobile_base_frame_id",mobile_base_frame_id,mobile_base_frame_id);
+            this->get_parameter_or<std::string>("mobile_base_frame_id",mobile_base_frame_id, "base_scan");
             this->get_parameter_or<int>("wait_command", wait, 1);
             this->get_parameter_or<int>("mask_command", mask, 2);
 
@@ -377,333 +383,329 @@ class sick_nav350: public rclcpp::Node
              pub1->publish(*st);
             /////////////////////////////////////////////////////msgs from customized
         }
-
+        
     public:    
         int work_loop()
         {
-            init_param();
-            /* Define buffers for return values */
-            double range_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
-            int intensity_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
-             /* Define buffers to hold sector specific data */
-            unsigned int num_measurements = {0};
-            unsigned int sector_start_timestamp = {0};
-            unsigned int sector_stop_timestamp = {0};
-            double sector_step_angle = {0};
-            double sector_start_angle = {0};
-            double sector_stop_angle = {0};
+          init_param();
+          /* Define buffers for return values */
+          double range_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
+          int intensity_values[SickToolbox::SickNav350::SICK_MAX_NUM_MEASUREMENTS] = {0};
+            /* Define buffers to hold sector specific data */
+          unsigned int num_measurements = {0};
+          unsigned int sector_start_timestamp = {0};
+          unsigned int sector_stop_timestamp = {0};
+          double sector_step_angle = {0};
+          double sector_start_angle = {0};
+          double sector_stop_angle = {0};
 
-            std::vector<tf2_ros::TransformBroadcaster> landmark_broadcasters;
-            //tf2_ros::TransformBroadcaster odom_broadcaster;
-            //tf2_ros::TransformListener tf_listerner;
-            std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
-            std::vector<tf2_ros::TransformListener> tf_listerner;
-            //geometry_msgs::msg::TransformStamped odom_broadcaster;
-            //geometry_msgs::msg::TransformStamped tf_listerner;
+          std::vector<tf2_ros::TransformBroadcaster> landmark_broadcasters;
+          //tf2_ros::TransformBroadcaster odom_broadcaster;
+          //tf2_ros::TransformListener tf_listerner;
+          std::vector<tf2_ros::TransformBroadcaster> odom_broadcaster;
+          std::vector<tf2_ros::TransformListener> tf_listerner;
+          //geometry_msgs::msg::TransformStamped odom_broadcaster;
+          //geometry_msgs::msg::TransformStamped tf_listerner;
 
-                        /* Instantiate the object */
-            SickToolbox::SickNav350 sick_nav350(ipaddress.c_str(),port);
-            double last_time_stamp=0;
+          /* Instantiate the object */
+          SickToolbox::SickNav350 sick_nav350(ipaddress.c_str(),port);
+          double last_time_stamp=0;
+          try
+          {
+            /* Initialize the device */
+            sick_nav350.Initialize();
+            sick_nav350.GetSickIdentity();
+            // TODO: do some calls to setup the device - e.g. scan rate. Configure mapping. Configure reflectors/landmarks
+
+            if (do_mapping)
+            {
+              sick_nav350.SetOperatingMode((int)OperatingModes::MAPPING);
+              sick_nav350.DoMapping();
+              sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
+              RCLCPP_INFO_STREAM(this->get_logger(), "Sicknav50 Mapping Completed");
+            }
+
             try
             {
-                /* Initialize the device */
-                sick_nav350.Initialize();
-                sick_nav350.GetSickIdentity();
-                // TODO: do some calls to setup the device - e.g. scan rate. Configure mapping. Configure reflectors/landmarks
+              sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
+              sick_nav350.SetScanDataFormat();
+              sick_nav350.SetOperatingMode(op_mode);
+            }
 
-                if (do_mapping)
-                {
-                    sick_nav350.SetOperatingMode((int)OperatingModes::MAPPING);
-                    sick_nav350.DoMapping();
-                    sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
-                    RCLCPP_INFO_STREAM(this->get_logger(), "Sicknav50 Mapping Completed");
-                }
+            catch (...)
+            {
+              RCLCPP_ERROR(this->get_logger(), "Configuration error");
+              return -1;
+            }
 
-                try
-                {
-                    sick_nav350.SetOperatingMode((int)OperatingModes::STANDBY);
-                    sick_nav350.SetScanDataFormat();
-                    sick_nav350.SetOperatingMode(op_mode);
-                }
-                catch (...)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "Configuration error");
-                    return -1;
-                }
+            smoothtime smoothtimer = smoothtime();
+            averager avg_fulldur = averager();
+            averager avg_scandur = averager();
+            smoothtimer.set_smoothing_factor(smoothing_factor);
+            smoothtimer.set_error_threshold(error_threshold);
+            rclcpp::Time last_start_scan_time;
+            unsigned int last_sector_stop_timestamp = 0;
+            double full_duration;
+            rclcpp::Rate loop_rate(8);
+            //std::unique_ptr<tf2_ros::TransformBroadcaster> odom_broadcasters;
+            //tf2_ros::TransformBroadcaster odom_broadcasters; 
 
-                smoothtime smoothtimer = smoothtime();
-                averager avg_fulldur = averager();
-                averager avg_scandur = averager();
-                smoothtimer.set_smoothing_factor(smoothing_factor);
-                smoothtimer.set_error_threshold(error_threshold);
-                rclcpp::Time last_start_scan_time;
-                unsigned int last_sector_stop_timestamp = 0;
-                double full_duration;
-                rclcpp::Rate loop_rate(8);
-                //std::unique_ptr<tf2_ros::TransformBroadcaster> odom_broadcasters;
-                //tf2_ros::TransformBroadcaster odom_broadcasters; 
+            // looking up transform from sicknav350 to target frame
+            if(target_frame_id == sick_frame_id)
+            {
+              sickn350_to_target_tf.setIdentity(); // = tf2::toMsg(test_transforms);
+            }
 
-               
-                // looking up transform from sicknav350 to target frame
-                if(target_frame_id == sick_frame_id)
-                {
-                  sickn350_to_target_tf.setIdentity(); // = tf2::toMsg(test_transforms);
-                }
-                else
-                {
-                  std::string error_msg;
-                  rclcpp::Time current_time = rclcpp::Time(0);
-                  // tf2_ros::Buffer tf_buffer;
-                  //std::vector<tf2_ros::Buffer> tf_buffer;
-                  geometry_msgs::msg::TransformStamped test_buffer1;
-                  tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+            else
+            {
+              std::string error_msg;
+              rclcpp::Time current_time = rclcpp::Time(0);
+              // tf2_ros::Buffer tf_buffer;
+              //std::vector<tf2_ros::Buffer> tf_buffer;
+              geometry_msgs::msg::TransformStamped test_buffer1;
+              tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
 
-                try
-                {
- 
-                // the tf2 command is chnaged
-                //   tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+              try
+              {
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              // the tf2 command is chnaged
+              //   tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
 
-                //   tf_listerner = tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
-                  
-                //   //tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
+              //   tf_listerner = tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
+                
+              //   //tf_buffer.waitForTransform(target_frame_id, sick_frame_id, rclcpp::Time(0), rclcpp::Duration(TRANSFORM_TIMEOUT), rclcpp::Duration(POLLING_DURATION),&error_msg);
 
-                //  if(!tf_listerner)
-                //   RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup timed out, error msg: "<<error_msg);
-                //   return -1;
-                // }
-                    test_buffer1 = tf_buffer->lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
-                }
+              //  if(!tf_listerner)
+              //   RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup timed out, error msg: "<<error_msg);
+              //   return -1;
+              // }
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                test_buffer1 = tf_buffer->lookupTransform(target_frame_id,sick_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
+              }
 
-
-                catch(tf2::LookupException &exp)
-                {
+              catch(tf2::LookupException &exp)
+              {
                   RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting");
                   return -1;
-                }
+              }
+              tf2::convert(test_buffer1, sickn350_to_target_tf);
+            }
 
-                catch(tf2::LookupException &exp)
-                {
-                    RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<sick_frame_id<<" and "<<target_frame_id<<" failed, exiting");
-                    return -1;
-                }
-                  tf2::convert(test_buffer1, sickn350_to_target_tf);
-                }
+            rclcpp::Time previous_time = rclcpp::Clock().now()-rclcpp::Duration(0.5f);
+            tf2::Stamped<tf2::Transform>::Transform mobile_base_current_tf = tf2::Stamped<tf2::Transform>::Transform::getIdentity();
+            tf2::Stamped<tf2::Transform>::Transform mobile_base_prev_tf = tf2::Stamped<tf2::Transform>::Transform::getIdentity();
+            nav_msgs::msg::Odometry odom_msg;
 
-                rclcpp::Time previous_time = rclcpp::Clock().now()-rclcpp::Duration(0.5f);
-                tf2::Stamped<tf2::Transform>::Transform mobile_base_current_tf = tf2::Stamped<tf2::Transform>::Transform::getIdentity();
-                tf2::Stamped<tf2::Transform>::Transform mobile_base_prev_tf = tf2::Stamped<tf2::Transform>::Transform::getIdentity();
+            if(publish_odom)
+            {
+              auto odom_pub = this->create_publisher<nav_msgs::msg::Odometry>(ODOM_TOPIC, 10);
 
-                nav_msgs::msg::Odometry odom_msg;
+              if(mobile_base_frame_id == "")
+              {
+                RCLCPP_ERROR_STREAM(this->get_logger(), "Frame id for mobile base was not set in the parameter list");
+                return -1;
+              }
+              odom_msg.header.frame_id = frame_id;
+              odom_msg.child_frame_id = mobile_base_frame_id;
 
-                if(publish_odom)
-                {
-                   RCLCPP_INFO(this->get_logger(), "here 1");
-                    auto odom_pub = this->create_publisher<nav_msgs::msg::Odometry>(ODOM_TOPIC, rclcpp::QoS(rclcpp::SensorDataQoS()));
+              std::string error_msg;
+              rclcpp::Time current_time = rclcpp::Time(0);
+              tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+              geometry_msgs::msg::TransformStamped test_buffer1;
+              try
+              {
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              // the tf2 command is chnaged
+              //     if(!tf_listerner.waitForTransform(
+              //         target_frame_id,mobile_base_frame_id,rclcpp::Time(0),rclcpp::Duration(TRANSFORM_TIMEOUT),
+              //         rclcpp::Duration(POLLING_DURATION),&error_msg))
+              //     {
+              //          //ROS_ERROR_STREAM("Transform lookup timed out, error msg: "<<error_msg);
+              //          return -1;
+              //     }
 
-                if(mobile_base_frame_id == "")
-                {
-                                     RCLCPP_INFO(this->get_logger(), "here 2");
-                    RCLCPP_ERROR_STREAM(this->get_logger(), "Frame id for mobile base was not set in the parameter list");
-                    return -1;
-                }
-                                   RCLCPP_INFO(this->get_logger(), "here 3");
-                odom_msg.header.frame_id = frame_id;
-                odom_msg.child_frame_id = mobile_base_frame_id;
+              //     tf_listerner.lookupTransform(target_frame_id,mobile_base_frame_id,current_time,target_to_mobile_base_tf);
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////      
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+                test_buffer1 = tf_buffer->lookupTransform(target_frame_id, mobile_base_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
+                //test_buffer1 = tf_buffer->lookupTransform(target_frame_id,0, mobile_base_frame_id,0,sickn350_to_target_tf,rclcpp::Duration(TRANSFORM_TIMEOUT));
+              }
 
-                std::string error_msg;
-                rclcpp::Time current_time = rclcpp::Time(0);
-                tf_buffer = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-                geometry_msgs::msg::TransformStamped test_buffer1;
-                try
-                {
+              catch(tf2::LookupException &exp)
+              {
+                RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<mobile_base_frame_id<<" and "<<target_frame_id<<" failed, exiting");
+                return -1;
+              }
+              tf2::convert(test_buffer1, target_to_mobile_base_tf);
+            }
+            while (rclcpp::ok() && !need_exit)
+            {
+              //Grab the measurements (from all sectors)
+              if (op_mode==3)
+              {
+                //ROS_INFO_STREAM("Getting landmark data");
+                sick_nav350.GetDataLandMark(1,1);
+              }
 
-                //     if(!tf_listerner.waitForTransform(
-                //         target_frame_id,mobile_base_frame_id,rclcpp::Time(0),rclcpp::Duration(TRANSFORM_TIMEOUT),
-                //         rclcpp::Duration(POLLING_DURATION),&error_msg))
-                //     {
-                //          //ROS_ERROR_STREAM("Transform lookup timed out, error msg: "<<error_msg);
-                //          return -1;
-                //     }
+              else if (op_mode==4)
+              {
+                //ROS_DEBUG_STREAM("Getting nav data");
+                sick_nav350.GetDataNavigation(wait,mask);
+              }
 
-                //     tf_listerner.lookupTransform(target_frame_id,mobile_base_frame_id,current_time,target_to_mobile_base_tf);
-                                   RCLCPP_INFO(this->get_logger(), "here 4");
-                  test_buffer1 = tf_buffer->lookupTransform(target_frame_id,mobile_base_frame_id,current_time,rclcpp::Duration(TRANSFORM_TIMEOUT));
-                 }
-                catch(tf2::LookupException &exp)
-                {
-                    RCLCPP_ERROR_STREAM(this->get_logger(), "Transform lookup between "<<mobile_base_frame_id<<" and "<<target_frame_id<<" failed, exiting");
-                    return -1;
-                }
-                  tf2::convert(test_buffer1, target_to_mobile_base_tf);
-                }
+              else
+              {
+                RCLCPP_INFO_STREAM(this->get_logger()," Selected operating mode does not return data... try again");
+                return -1;
+              }
 
-                while (rclcpp::ok())
-                {
-                //Grab the measurements (from all sectors)
-                if (op_mode==3)
-                {
-                    //ROS_INFO_STREAM("Getting landmark data");
-                    sick_nav350.GetDataLandMark(1,1);
-                }
-                else if (op_mode==4)
-                {
-                    //ROS_DEBUG_STREAM("Getting nav data");
-                    sick_nav350.GetDataNavigation(wait,mask);
-                }
-                else
-                {
-                    RCLCPP_INFO_STREAM(this->get_logger()," Selected operating mode does not return data... try again");
-                    return -1;
-                }
-                //ROS_DEBUG_STREAM("Getting sick range/scan measurements");
-                sick_nav350.GetSickMeasurements(range_values,
-                                                intensity_values,
-                                                &num_measurements,
-                                                &sector_step_angle,
-                                                &sector_start_angle,
-                                                &sector_stop_angle,
-                                                &sector_start_timestamp,
-                                                &sector_stop_timestamp);
+              //ROS_DEBUG_STREAM("Getting sick range/scan measurements");
+              sick_nav350.GetSickMeasurements(range_values,
+                                              intensity_values,
+                                              &num_measurements,
+                                              &sector_step_angle,
+                                              &sector_start_angle,
+                                              &sector_stop_angle,
+                                              &sector_start_timestamp,
+                                              &sector_stop_timestamp);
 
 
-                /*
-                * Get nav localization data and publish /map to /odom transform
-                */
-                double x1=(double) sick_nav350.PoseData_.x;
-                double y1=(double) sick_nav350.PoseData_.y;
-                double phi1=sick_nav350.PoseData_.phi;
-                //ROS_DEBUG_STREAM("NAV350 pose in x y alpha:"<<x1<<" "<<y1<<" "<<phi1/1000.0);
-                tf2::Transform odom_to_sick_tf;
-                tf2::Transform odom_to_target_tf;
-                tf2::Quaternion odomquat=createQuaternionFromYaw(DEG2RAD(phi1/1000.0));
-                odomquat.inverse();
-                odom_to_sick_tf.setRotation(odomquat);
-                odom_to_sick_tf.setOrigin(tf2::Vector3(-x1 / 1000, -y1/ 1000, 0.0));
+              /*
+              * Get nav localization data and publish /map to /odom transform
+              */
+              double x1=(double) sick_nav350.PoseData_.x;
+              double y1=(double) sick_nav350.PoseData_.y;
+              double phi1=sick_nav350.PoseData_.phi;
+              //ROS_DEBUG_STREAM("NAV350 pose in x y alpha:"<<x1<<" "<<y1<<" "<<phi1/1000.0);
+              tf2::Transform odom_to_sick_tf;
+              tf2::Transform odom_to_target_tf;
+              tf2::Quaternion odomquat=createQuaternionFromYaw(DEG2RAD(phi1/1000.0));
+              odomquat.inverse();
+              odom_to_sick_tf.setRotation(odomquat);
+              odom_to_sick_tf.setOrigin(tf2::Vector3(-x1 / 1000, -y1/ 1000, 0.0));
 
-                // converting to target frame
-                odom_to_target_tf = odom_to_sick_tf * sickn350_to_target_tf;
+              // converting to target frame
+              odom_to_target_tf = odom_to_sick_tf * sickn350_to_target_tf;
 
-                //tf2::Stamped<Transform> transformTf = ...;
-               // geometry_msgs::TransformStamped s = tf2::toMsg(transformTf);
+              //tf2::Stamped<Transform> transformTf = ...;
+              // geometry_msgs::TransformStamped s = tf2::toMsg(transformTf);
                 
-                auto now = rclcpp::Clock().now();
+              auto now = rclcpp::Clock().now();
 
-                //add infomations
-                // s.header.stamp = now;
-                // s.header.frame_id = frame_id;
-                // s.child_frame_id = target_frame_id;
-                // s.transform = tf2::toMsg(odom_to_target_tf);
-                // s.sendTransform(odom_broadcasters);
+              //add infomations
+              // s.header.stamp = now;
+              // s.header.frame_id = frame_id;
+              // s.child_frame_id = target_frame_id;
+              // s.transform = tf2::toMsg(odom_to_target_tf);
+              // s.sendTransform(odom_broadcasters);
 
 
 
-                RCLCPP_DEBUG_STREAM(this->get_logger(), "Sending transform from "<<frame_id<<" to "<<target_frame_id);
-                // odom_broadcasters->sendTransform(s);            
-                ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                // //odom_broadcasters.sendTransform(tf2_ros::StampedTransform(odom_to_target_tf, rclcpp::Clock().now(), frame_id, target_frame_id));
+              RCLCPP_DEBUG_STREAM(this->get_logger(), "Sending transform from "<<frame_id<<" to "<<target_frame_id);
+              // odom_broadcasters->sendTransform(s);            
+              ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              // //odom_broadcasters.sendTransform(tf2_ros::StampedTransform(odom_to_target_tf, rclcpp::Clock().now(), frame_id, target_frame_id));
       
-                // publishing odometry
-                if(publish_odom)
-                {
-                    mobile_base_current_tf = odom_to_target_tf * target_to_mobile_base_tf;
-                    createOdometryMessage(rclcpp::Clock().now() - previous_time, mobile_base_prev_tf, mobile_base_current_tf, odom_msg);
-                    mobile_base_prev_tf = mobile_base_current_tf;
-                    previous_time = rclcpp::Clock().now();
-                    odom_pub->publish(odom_msg);
-                }
-                /*
-                * Get landmark data and broadcast transforms
-                */
-                int num_reflectors=sick_nav350.PoseData_.numUsedReflectors;
-                int number_reflectors=sick_nav350.ReflectorData_.num_reflector;
-                std::vector<double> Rx(number_reflectors), Ry(number_reflectors);
-                RCLCPP_DEBUG_STREAM(this->get_logger(), "NAV350 # reflectors seen:"<<number_reflectors);
-                RCLCPP_DEBUG_STREAM(this->get_logger(), "NAV350 # reflectors used:"<<num_reflectors);
-                for (int r=0;r<number_reflectors; r++)
-                {
-                    Rx[r]=(double) sick_nav350.ReflectorData_.x[r];
-                    Ry[r]=(double) sick_nav350.ReflectorData_.y[r];
-                    RCLCPP_DEBUG_STREAM(this->get_logger(), "Reflector "<<r<<" x pos: "<<Rx[r]<<" y pos: "<<Ry[r]);
-                }
-                //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                //landmark_broadcasters->resize(number_reflectors);
-                ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-                //PublishReflectorTransform(Rx, Ry, DEG2RAD(phi1/1000.0), landmark_broadcasters, reflector_frame_id, reflector_child_frame_id);
+              // publishing odometry
+              if(publish_odom)
+              {
+                  mobile_base_current_tf = odom_to_target_tf * target_to_mobile_base_tf;
+                  createOdometryMessage(rclcpp::Clock().now() - previous_time, mobile_base_prev_tf, mobile_base_current_tf, odom_msg);
+                  mobile_base_prev_tf = mobile_base_current_tf;
+                  previous_time = rclcpp::Clock().now();
+                  odom_pub->publish(odom_msg);
+              }
+              /*
+              * Get landmark data and broadcast transforms
+              */
+              int num_reflectors=sick_nav350.PoseData_.numUsedReflectors;
+              int number_reflectors=sick_nav350.ReflectorData_.num_reflector;
+              std::vector<double> Rx(number_reflectors), Ry(number_reflectors);
+              RCLCPP_DEBUG_STREAM(this->get_logger(), "NAV350 # reflectors seen:"<<number_reflectors);
+              RCLCPP_DEBUG_STREAM(this->get_logger(), "NAV350 # reflectors used:"<<num_reflectors);
+              for (int r=0;r<number_reflectors; r++)
+              {
+                  Rx[r]=(double) sick_nav350.ReflectorData_.x[r];
+                  Ry[r]=(double) sick_nav350.ReflectorData_.y[r];
+                  RCLCPP_DEBUG_STREAM(this->get_logger(), "Reflector "<<r<<" x pos: "<<Rx[r]<<" y pos: "<<Ry[r]);
+              }
+              //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              //landmark_broadcasters->resize(number_reflectors);
+              ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+              //PublishReflectorTransform(Rx, Ry, DEG2RAD(phi1/1000.0), landmark_broadcasters, reflector_frame_id, reflector_child_frame_id);
 
-                /*
-                * Get Scan data and publish scan
-                */
-                if (sector_start_timestamp<last_time_stamp)
-                {
-                    loop_rate.sleep();
-                    rclcpp::spin_some(shared_from_this());
-                    continue;
-                }
-                last_time_stamp=sector_start_timestamp;
-                rclcpp::Time end_scan_time = rclcpp::Clock().now();
+              /*
+              * Get Scan data and publish scan
+              */
+              if (sector_start_timestamp<last_time_stamp)
+              {
+                  loop_rate.sleep();
+                  rclcpp::spin_some(shared_from_this());
+                  continue;
+              }
+              last_time_stamp=sector_start_timestamp;
+              rclcpp::Time end_scan_time = rclcpp::Clock().now();
 
-                double scan_duration = (sector_stop_timestamp - sector_start_timestamp) * 1e-3;
-                avg_scandur.add_new(scan_duration);
-                scan_duration = 0.125;//avg_scandur.get_mean();
-                if (last_sector_stop_timestamp == 0) {
-                    full_duration = 1./((double)sick_motor_speed);
-                } else {
-                    full_duration = (sector_stop_timestamp - last_sector_stop_timestamp) * 1e-3;
-                }
-                avg_fulldur.add_new(full_duration);
-                full_duration = avg_fulldur.get_mean();
+              double scan_duration = (sector_stop_timestamp - sector_start_timestamp) * 1e-3;
+              avg_scandur.add_new(scan_duration);
+              scan_duration = 0.125;//avg_scandur.get_mean();
+              if (last_sector_stop_timestamp == 0) {
+                  full_duration = 1./((double)sick_motor_speed);
+              } else {
+                  full_duration = (sector_stop_timestamp - last_sector_stop_timestamp) * 1e-3;
+              }
+              avg_fulldur.add_new(full_duration);
+              full_duration = avg_fulldur.get_mean();
 
-                rclcpp::Time smoothed_end_scan_time = smoothtimer.smooth_timestamp(end_scan_time, rclcpp::Duration(full_duration));
-                rclcpp::Time start_scan_time = smoothed_end_scan_time - rclcpp::Duration(scan_duration);
-                sector_start_angle-=180;
-                sector_stop_angle-=180;
-                publish_scan(scan_pub, range_values, num_measurements, intensity_values, num_measurements, start_scan_time, scan_duration, inverted,
-                            //DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp);
-                            DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp,scan_pub1);
+              rclcpp::Time smoothed_end_scan_time = smoothtimer.smooth_timestamp(end_scan_time, rclcpp::Duration(full_duration));
+              rclcpp::Time start_scan_time = smoothed_end_scan_time - rclcpp::Duration(scan_duration);
+              sector_start_angle-=180;
+              sector_stop_angle-=180;
+              publish_scan(scan_pub, range_values, num_measurements, intensity_values, num_measurements, start_scan_time, scan_duration, inverted,
+                          //DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp);
+                          DEG2RAD((float)sector_start_angle), DEG2RAD((float)sector_stop_angle), scan_frame_id, sector_start_timestamp,scan_pub1);
 
 
-                /*ROS_INFO_STREAM/*DEBUG_STREAM*//*("Num meas: " << num_measurements
-                << " smoothed start T: " << start_scan_time
-                << " smoothed rate: " << 1./(start_scan_time - last_start_scan_time).toSec()
-                << " raw start T: " << sector_start_timestamp
-                << " raw stop T: " << sector_stop_timestamp
-                << " dur: " << full_duration
-                << " step A: " << sector_step_angle
-                << " start A: " << sector_start_angle
-                << " stop A: " << sector_stop_angle);
-                //last_start_scan_time = start_scan_time;
-                //last_sector_stop_timestamp = sector_stop_timestamp;*/
-                loop_rate.sleep();
-                rclcpp::spin_some(shared_from_this());
-                }
+              /*ROS_INFO_STREAM/*DEBUG_STREAM*//*("Num meas: " << num_measurements
+              << " smoothed start T: " << start_scan_time
+              << " smoothed rate: " << 1./(start_scan_time - last_start_scan_time).toSec()
+              << " raw start T: " << sector_start_timestamp
+              << " raw stop T: " << sector_stop_timestamp
+              << " dur: " << full_duration
+              << " step A: " << sector_step_angle
+              << " start A: " << sector_start_angle
+              << " stop A: " << sector_stop_angle);
+              //last_start_scan_time = start_scan_time;
+              //last_sector_stop_timestamp = sector_stop_timestamp;*/
+              loop_rate.sleep();
+              rclcpp::spin_some(shared_from_this());
+            }
 
-    /* Uninitialize the device */
-    try
-    {
-      sick_nav350.Uninitialize();
-    }
-    catch(...)
-    {
-      cerr << "Uninitialize failed!" << endl;
-      return -1;
-    }
-  }
-  catch(...)
-  {
-   // RCLCPP_ERROR("Error");
-    return -1;
-  }
+            /* Uninitialize the device */
+            try
+            {
+              sick_nav350.Uninitialize();
+            }
+
+            catch(...)
+            {
+              cerr << "Uninitialize failed!" << endl;
+              return -1;
+            }
+          }
+          catch(...)
+          {
+            RCLCPP_ERROR(this->get_logger(), "Error");
+            return -1;
+          }
         }
 };
 
 
 
-
-
-//
-//brought from rplidar source
-bool need_exit = false;
 
 void ExitHandler(int sig)
 {
